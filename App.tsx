@@ -18,10 +18,11 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { ProcessingState, TrainingData } from './types';
-import { processVideoWithGemini } from './services/geminiService';
+import { processVideoWithChunking } from './services/chunkedVideoProcessor';
 import { generateTranscriptPDF } from './utils/pdfGenerator';
 import { exportAsJSON, exportAsTXT, exportAsCSV } from './utils/exportUtils';
 import ProcessingOverlay from './components/ProcessingOverlay';
+import { ChunkingProgress } from './utils/videoChunker';
 
 const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
@@ -29,6 +30,7 @@ const App: React.FC = () => {
   const [processingState, setProcessingState] = useState<ProcessingState>(ProcessingState.IDLE);
   const [result, setResult] = useState<TrainingData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [chunkProgress, setChunkProgress] = useState<ChunkingProgress | null>(null);
 
   // Form Fields
   const [title, setTitle] = useState('');
@@ -38,14 +40,17 @@ const App: React.FC = () => {
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];
     if (selected) {
-      if (selected.size > 50 * 1024 * 1024) {
-        setError("File size exceeds 50MB. Large files take significant processing time.");
+      // Increased limit to 2GB for large videos (2-hour videos can be 500MB-2GB)
+      const maxSize = 2 * 1024 * 1024 * 1024; // 2GB
+      if (selected.size > maxSize) {
+        setError("File size exceeds 2GB. Please use a smaller video file.");
         return;
       }
       setFile(selected);
       setPreviewUrl(URL.createObjectURL(selected));
       setError(null);
       setResult(null);
+      setChunkProgress(null);
     }
   };
 
@@ -55,41 +60,52 @@ const App: React.FC = () => {
     try {
       setProcessingState(ProcessingState.PREPARING);
       setError(null);
+      setChunkProgress(null);
 
-      // Convert to base64
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve) => {
-        reader.onload = () => {
-          const result = reader.result as string;
-          resolve(result.split(',')[1]);
-        };
-        reader.readAsDataURL(file);
-      });
-
-      const base64 = await base64Promise;
-      
       setProcessingState(ProcessingState.UPLOADING);
       // Brief delay to ensure state update is visible to user
       await new Promise(r => setTimeout(r, 800));
       
       setProcessingState(ProcessingState.ANALYZING);
-      // Analysis and Indexing are handled within the service call, 
-      // but we can fake a sub-state transition after the call returns
-      const data = await processVideoWithGemini(base64, file.type, {
-        title: title || file.name,
-        speakerName: speakerName || 'Target Persona',
-        category
-      });
+      
+      // Use chunked processing which automatically handles large videos
+      const data = await processVideoWithChunking(
+        file,
+        {
+          title: title || file.name,
+          speakerName: speakerName || 'Target Persona',
+          category
+        },
+        {
+          chunkDurationMinutes: 15, // Process in 15-minute chunks
+          onChunkProgress: (progress) => {
+            setChunkProgress(progress);
+            // Update processing state based on progress
+            if (progress.status.includes('Preparing') || progress.status.includes('Creating')) {
+              setProcessingState(ProcessingState.PREPARING);
+            } else if (progress.status.includes('Processing')) {
+              setProcessingState(ProcessingState.ANALYZING);
+            } else if (progress.status.includes('Merging')) {
+              setProcessingState(ProcessingState.INDEXING);
+            }
+          },
+          onChunkComplete: (chunkIndex, totalChunks) => {
+            console.log(`Completed chunk ${chunkIndex} of ${totalChunks}`);
+          }
+        }
+      );
 
       setProcessingState(ProcessingState.INDEXING);
       await new Promise(r => setTimeout(r, 1200));
 
       setResult(data);
       setProcessingState(ProcessingState.COMPLETED);
+      setChunkProgress(null);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Network error. Video processing is compute-heavy, please try again.");
       setProcessingState(ProcessingState.ERROR);
+      setChunkProgress(null);
     }
   };
 
@@ -134,11 +150,12 @@ const App: React.FC = () => {
     setResult(null);
     setProcessingState(ProcessingState.IDLE);
     setError(null);
+    setChunkProgress(null);
   };
 
   return (
     <div className="min-h-screen flex flex-col items-center p-4 md:p-8 bg-slate-950 text-slate-200">
-      <ProcessingOverlay state={processingState} />
+      <ProcessingOverlay state={processingState} chunkProgress={chunkProgress} />
 
       {/* Header */}
       <header className="w-full max-w-6xl flex items-center justify-between mb-12">
@@ -173,7 +190,7 @@ const App: React.FC = () => {
                     <FileVideo className="w-10 h-10 text-slate-500 group-hover:text-blue-500" />
                   </div>
                   <p className="text-sm font-semibold text-slate-300">Target Persona Video</p>
-                  <p className="text-[10px] text-slate-500 uppercase mt-2">MP4/MOV up to 50MB</p>
+                  <p className="text-[10px] text-slate-500 uppercase mt-2">MP4/MOV up to 2GB (2-hour videos supported)</p>
                 </div>
                 <input id="video-upload" name="video-upload" type="file" className="hidden" accept="video/*" onChange={onFileChange} />
               </label>

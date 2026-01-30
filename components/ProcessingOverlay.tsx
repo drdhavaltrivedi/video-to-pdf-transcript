@@ -2,12 +2,14 @@
 import React, { useEffect, useState } from 'react';
 import { ProcessingState } from '../types';
 import { Loader2, CheckCircle2, Circle } from 'lucide-react';
+import { ChunkingProgress } from '../utils/videoChunker';
 
 interface Props {
   state: ProcessingState;
+  chunkProgress?: ChunkingProgress | null;
 }
 
-const ProcessingOverlay: React.FC<Props> = ({ state }) => {
+const ProcessingOverlay: React.FC<Props> = ({ state, chunkProgress }) => {
   const [dots, setDots] = useState('');
 
   useEffect(() => {
@@ -50,9 +52,26 @@ const ProcessingOverlay: React.FC<Props> = ({ state }) => {
           <h3 className="text-2xl font-bold text-center mb-2 text-white">
             Processing Neural Data{dots}
           </h3>
-          <p className="text-slate-500 text-center text-sm mb-10">
-            Verbatim multi-language extraction in progress. This typically takes 30-90 seconds.
+          <p className="text-slate-500 text-center text-sm mb-4">
+            {chunkProgress 
+              ? chunkProgress.status 
+              : "Verbatim multi-language extraction in progress. This typically takes 30-90 seconds."}
           </p>
+          
+          {chunkProgress && chunkProgress.totalChunks > 0 && (
+            <div className="mb-10">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+                <span>Chunk {chunkProgress.currentChunk} of {chunkProgress.totalChunks}</span>
+                <span>{Math.round(chunkProgress.progress)}%</span>
+              </div>
+              <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                <div 
+                  className="bg-blue-500 h-full transition-all duration-300 rounded-full"
+                  style={{ width: `${chunkProgress.progress}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           <div className="space-y-4">
             {stages.map((stage, idx) => {
