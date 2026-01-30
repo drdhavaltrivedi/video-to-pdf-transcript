@@ -1,0 +1,8 @@
+{
+  "name": "Avatar Training Suite: Video to PDF Transcript",
+  "description": "A high-performance tool for processing video content into structured, metadata-rich transcripts optimized for training AI avatars and vector database indexing.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
